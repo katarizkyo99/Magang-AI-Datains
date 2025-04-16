@@ -1,0 +1,106 @@
+import json
+import os
+import httpx
+from typing import (
+    Union,
+    Generator,
+    Iterator,
+    Optional,
+    List,
+)
+from open_webui.utils.misc import get_last_user_message
+from pydantic import BaseModel
+from openai import OpenAI
+from sqlalchemy import create_engine, text
+from llama_index.core import SQLDatabase
+from llama_index.embeddings.huggingface import HuggingFaceEmbedding
+from llama_index.core.query_engine import NLSQLTableQueryEngine
+from llama_index.llms.groq import Groq
+import openai
+
+
+def koneksidb():
+    db_url = "postgresql://postgres:1234@host.docker.internal:5432/film"
+    engine = create_engine(db_url)
+    return engine
+
+
+def generate(messages):
+    client = openai.OpenAI(
+        base_url="https://api.groq.com/openai/v1/",
+        api_key="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",
+    )
+
+    response = client.chat.completions.create(
+        model="llama3-70b-8192",
+        messages=messages,
+        temperature=0,
+        stream=True,
+    )
+    return response
+
+
+class Pipe:
+    name = "Magang_Chatbot"
+    version = "Magang_Chatbot"
+    description = "Magang_Chatbot"
+
+    class Valves(BaseModel):
+        pass
+
+    def __init__(self):
+        self.engine = koneksidb()
+
+    async def pipe(
+        self,
+        body: dict,
+        __user__: dict,
+        __event_emitter__=None,
+        __event_call__=None,
+        __task__=None,
+        __task_body__: Optional[dict] = None,
+        __valves__=None,
+    ) -> Union[str, Generator, Iterator]:
+
+        sql_database = SQLDatabase(self.engine, include_tables=["film_table"])
+        embed_model = HuggingFaceEmbedding(
+            model_name="sentence-transformers/all-MiniLM-L6-v2"
+        )
+
+        messages = [
+            {
+                "role": "system",
+                "content": "You are an AI Chatbot Film that always answers in clear and concise Indonesian and uses database references as answering material",
+            }
+        ]
+
+        user_message = get_last_user_message(body["messages"])
+
+        llm = Groq(
+            model="llama3-70b-8192",
+            api_key="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",
+        )
+
+        query_engine = NLSQLTableQueryEngine(
+            sql_database=sql_database,
+            tables=["film_table"],
+            llm=llm,
+            embed_model=embed_model,
+            system_prompt=(
+                """
+                - Kamu adalah asisten SQL. 
+                - Hanya generate query SELECT yang aman. 
+                - Jangan pernah membuat query yang memodifikasi data seperti INSERT, UPDATE, atau DELETE.
+                - Selalu tambahkan LIMIT 3 untuk membatasi hasil. 
+                - Jawaban harus dalam bahasa Indonesia yang ringkas dan jelas.
+                """
+            ),
+        )
+
+        query_result = query_engine.query(user_message)
+        messages.append({"role": "user", "content": f"{query_result}"})
+
+        print(messages)
+
+        response = generate(messages)
+        return response
