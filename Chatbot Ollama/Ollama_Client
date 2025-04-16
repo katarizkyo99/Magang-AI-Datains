@@ -1,0 +1,90 @@
+"""
+title: Example Filter
+author: open-webui
+author_url: https://github.com/open-webui
+funding_url: https://github.com/open-webui
+version: 0.1
+"""
+
+import json
+import os
+import httpx
+from typing import (
+    Union,
+    Generator,
+    Iterator,
+    Optional,
+    List,
+    Union,
+    Generator,
+    Iterator,
+)
+from open_webui.utils.misc import get_last_user_message
+from pydantic import BaseModel
+from openai import OpenAI
+import json
+
+
+def generate(messages):
+    client = OpenAI(
+        base_url="https://beast-specially-current-spots.trycloudflare.com/v1/",
+        api_key="ollama",
+    )
+
+    response = client.chat.completions.create(
+        model="deepseek-r1:7b",
+        messages=messages,
+        temperature=0,
+        stream=True,
+    )
+    return response
+
+
+def riwayat(messages):
+    history_message = "Riwayat Pesan: \n"
+    for pesan in messages[-3:-1]:
+        history_message += f"[{pesan['role']}] {pesan['content']}\n"
+
+    return history_message
+
+
+class Pipe:
+    # Metadata required for Open WebUI
+    name = "Magang_Chatbot_Ollama"
+    version = "Magang_Chatbot_Ollama"
+    description = "Magang_Chatbot_Ollama"
+
+    class Valves(BaseModel):
+        pass
+
+    def __init__(self):
+        pass
+
+    async def pipe(
+        self,
+        body: dict,
+        __user__: dict,
+        __event_emitter__=None,
+        __event_call__=None,
+        __task__=None,
+        __task_body__: Optional[dict] = None,
+        __valves__=None,
+    ) -> Union[str, Generator, Iterator]:
+
+        history_message = riwayat(body["messages"])
+        print(history_message)
+
+        user_message = get_last_user_message(body["messages"])
+        print(user_message)
+
+        messages = [{"role": "system", "content": "Bantu asistenmu!"}]
+
+        # messages.append(history_message)
+        messages.append({"role": "system", "content": history_message})
+        messages.append({"role": "user", "content": f"{user_message}"})
+
+        print(messages)
+
+        respon = generate(messages)
+
+        return respon
