@@ -28,7 +28,7 @@ def koneksidb():
 def generate(messages):
     client = openai.OpenAI(
         base_url="https://api.groq.com/openai/v1/",
-        api_key="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",
+        api_key="YOUR API KEY HERE",
     )
 
     response = client.chat.completions.create(
@@ -78,7 +78,7 @@ class Pipe:
 
         llm = Groq(
             model="llama3-70b-8192",
-            api_key="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",
+            api_key="YOUR API KEY HERE",
         )
 
         query_engine = NLSQLTableQueryEngine(
