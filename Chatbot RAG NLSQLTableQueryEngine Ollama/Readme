@@ -1,0 +1,12 @@
+Proses Instalasi
+1. Install Postgresql dan Open Web UI di Windows
+2. Jalankan keduanya di docker agar satu lingkungan dengan command
+======================================================================
+docker run -d -p 3030:8080 ^
+  --add-host=host.docker.internal:host-gateway ^
+  -v open-webui:/app/backend/data ^
+  --name open-webui1 --restart always ^
+  -e DATABASE_URL="postgresql://postgres:1234@host.docker.internal:5432/film" ^
+  ghcr.io/open-webui/open-webui:main
+======================================================================
+3. Update isi database di PostgreSQL
