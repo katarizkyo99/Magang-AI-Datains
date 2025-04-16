@@ -28,7 +28,7 @@ class Chatbot:
         return response
 
 if __name__ == "__main__":
-    os.environ["GROQ_API_KEY"] = "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"  # Set API Key di runtime (sementara)
+    os.environ["GROQ_API_KEY"] = "YOUR API KEY HERE"  # Set API Key di runtime (sementara)
     chatbot = Chatbot()
 
     print("Chatbot Groq siap! Ketik 'exit' untuk keluar.")
