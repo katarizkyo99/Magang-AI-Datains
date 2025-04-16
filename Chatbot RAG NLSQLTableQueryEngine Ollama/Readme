@@ -1,5 +1,5 @@
 Proses Instalasi
-1. Install Postgresql dan Open Web UI di Windows
+1. Install Postgresql, Open WebUI, dan Docker di Windows
 2. Jalankan keduanya di docker agar satu lingkungan dengan command
 ======================================================================
 docker run -d -p 3030:8080 ^
