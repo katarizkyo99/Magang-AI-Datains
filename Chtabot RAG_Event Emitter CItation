@@ -1,0 +1,329 @@
+import json
+import os
+import httpx
+from typing import (
+    Union,
+    Generator,
+    Iterator,
+    Optional,
+    List,
+)
+from open_webui.utils.misc import get_last_user_message
+from pydantic import BaseModel
+import openai
+from sqlalchemy import create_engine, text
+from llama_index.core import SQLDatabase
+from llama_index.embeddings.huggingface import HuggingFaceEmbedding
+from llama_index.core.query_engine import NLSQLTableQueryEngine
+from llama_index.llms.groq import Groq
+
+from llama_index.core.indices.vector_store import VectorStoreIndex
+from llama_index.core.prompts import PromptTemplate
+from llama_index.core.indices.struct_store.sql_query import SQLTableRetrieverQueryEngine
+from llama_index.core.objects import SQLTableSchema, ObjectIndex, SQLTableNodeMapping
+from llama_index.core import ServiceContext, set_global_service_context
+from llama_index.core import Settings
+
+from datetime import datetime
+import asyncio
+
+
+def koneksidb():
+    db_url = "postgresql://postgres:1234@host.docker.internal:5432/bangun"
+    engine = create_engine(db_url)
+    return engine
+
+
+def generate(messages):
+    client = openai.OpenAI(
+        base_url="https://api.groq.com/openai/v1/",
+        api_key="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",
+    )
+
+    response = client.chat.completions.create(
+        model="llama3-70b-8192",
+        messages=messages,
+        temperature=0,
+        stream=True,
+    )
+    return response
+
+
+# ======================================================================================================================
+def validator(query_result: str, answer: str):
+    client = openai.OpenAI(
+        base_url="https://api.groq.com/openai/v1/",
+        api_key="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",
+    )
+
+    validasi_pesan = [
+        {
+            "role": "system",
+            "content": "You are a validator that checks if the given answer is logically correct based on the SQL query result. Answer only with 'yes' or 'no', and if 'no', explain why shortly in one sentence. Don't add information that doesn't appear in SQLResult. If there is no data, say that it was not found. Final answers must be summarized from SQLResult only, and must not fabricate answers outside of those results.",
+        },
+        {
+            "role": "user",
+            "content": f"SQLResult: {query_result}\nAnswer: {answer}\nIs the answer correct?",
+        },
+    ]
+
+    hasil = client.chat.completions.create(
+        model="gemma2-9b-it",
+        messages=validasi_pesan,
+        temperature=0,
+    )
+
+    validation_reply = hasil.choices[0].message.content.lower()
+    return "yes" in validation_reply
+
+
+# ======================================================================================================================
+
+
+# ======================================================================================================================
+
+
+class Pipe:
+    name = "Magang_Chatbot"
+    version = "Magang_Chatbot"
+    description = "Magang_Chatbot"
+
+    class Valves(BaseModel):
+        pass
+
+    def __init__(self):
+        self.engine = koneksidb()
+        self.citation = False
+
+    async def pipe(
+        self,
+        body: dict,
+        __user__: dict,
+        __event_emitter__=None,
+        __event_call__=None,
+        __task__=None,
+        __task_body__: Optional[dict] = None,
+        __valves__=None,
+    ) -> Union[str, Generator, Iterator]:
+
+        sql_database = SQLDatabase(self.engine, include_tables=["dataset_pembangunan"])
+
+        embed_model = HuggingFaceEmbedding(
+            model_name="sentence-transformers/all-MiniLM-L6-v2"
+        )
+        Settings.embed_model = embed_model
+        # ===================================================================
+
+        messages = [
+            {
+                "role": "system",
+                "content": "You are an AI Chatbot Film that always answers in clear and concise Indonesian and uses database references as answering material",
+            }
+        ]
+
+        user_message = get_last_user_message(body["messages"])
+
+        # ===================================================================
+        table_node_mapping = SQLTableNodeMapping(sql_database)
+        table_schema_objs = []
+        table_schema_objs.append((SQLTableSchema(table_name="dataset_pembangunan")))
+
+        obj_index = ObjectIndex.from_objects(
+            table_schema_objs,
+            table_node_mapping,
+            VectorStoreIndex,
+            embed_model=embed_model,
+        )
+
+        # ===================================================================
+        instruction_1 = """
+        Given an input question, first create a syntactically correct {dialect} query to run, then look at the results of the query and return the answer. 
+        You must SELECT multiple relevant columns (at least 2 or more) when building your query unless the question specifically asks for only one column.
+        You can order the results by a relevant column to return the most interesting examples in the database.
+        Unless the user specifies in the question a specific number of examples to obtain, query for at most 10 results using the LIMIT clause as per the database engine. You can order the results to return the most informative data in the database.
+        Never query for all the columns from a specific table, only ask for a few relevant columns given the question.
+        You should use DISTINCT statements and avoid returning duplicates wherever possible.
+        Do not return example data if no data is found. You have access to a SQL database, and the only results you should return are values from that database.
+        Answer the user question using bahasa indonesia if possible.
+        Your Final answer should return the summary of the query result. You cannot return the SQL Query itself.
+        Pay attention to use only the column names that you can see in the schema description. Be careful to not query for columns that do not exist. Pay attention to which column is in which table. Also, qualify column names with the table name when needed. You are required to use the following format, each taking one line.
+        Your answers should consider the history message if exist and relevant
+        Don't add information that doesn't appear in SQLResult. If there is no data, say that it was not found.
+        Final answers must be summarized from SQLResult only, and must not fabricate answers outside of those results.
+        Don't use phrases like 'That's right', 'You're right', 'Thank you for the clarification', etc. Answer directly with facts from the database.
+        Use iLike when generating queries instead of =
+        If the data is requested for a year, display it as a table of months, years, and requested data
+        """
+        # ===================================================================
+        instruction_2 = """
+        Use these format below depends whether you need to Query the database or one:
+
+        1. When query is needed
+        Question: Question here
+        SQLQuery: SQL Query to run (Only the SQL Query, DON'T ADD ANY *. example: SELECT column FROM table)
+        SQLResult: Result of the SQLQuery
+        Answer: Final answer here
+
+        2. When query not needed
+        Question: Question here
+        Answer: Final answer here
+        """
+        # ==============================================================================
+        text_to_sql_prompt = """
+        {instruction_1}
+        Only use tables listed below.
+        {schema}
+
+        {instruction_2}
+        
+        Complete this with one of the format above:
+        Question: {query_str}
+        """
+
+        text_to_sql_prompt = text_to_sql_prompt.replace(
+            "{instruction_1}", instruction_1
+        ).replace("{instruction_2}", instruction_2)
+
+        text_to_sql_template = PromptTemplate(text_to_sql_prompt)
+        retri = obj_index.as_retriever(similarity_top_k=3)
+
+        # ==============================================================================
+        llm = Groq(
+            model="llama3-70b-8192",
+            api_key="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",
+        )
+        Settings.llm = llm
+        # ==============================================================================
+
+        query_engine = SQLTableRetrieverQueryEngine(
+            sql_database=sql_database,
+            tables=["dataset_pembangunan"],
+            table_retriever=retri,
+            llm=llm,
+            text_to_sql_prompt=text_to_sql_template,
+        )
+        # ==============================================================================
+
+        max_attempts = 3
+        attempt = 0
+        valid = False
+        full_answer = ""
+
+        while attempt < max_attempts and not valid:
+            if __event_emitter__:
+                await __event_emitter__(
+                    {
+                        "type": "status",
+                        "data": {
+                            "description": f"Memeriksa jawaban... (percobaan ke-{attempt + 1})",
+                            "done": False,
+                            "hidden": False,
+                        },
+                    }
+                )
+                await asyncio.sleep(1)
+
+            query_result = query_engine.query(user_message)
+            print("ini query: ", query_result.metadata)
+
+            # ==============================================================================
+            # Menampilkan Sitasi Query
+            sql_query_text = str(
+                query_result.metadata.get("sql_query", "Query tidak ditemukan.")
+            )
+            # ==============================================================================
+
+            # ==============================================================================
+
+            if __event_emitter__:
+                await __event_emitter__(
+                    {
+                        "type": "citation",
+                        "data": {
+                            "document": [sql_query_text],
+                            "metadata": [
+                                {
+                                    "date_accessed": datetime.now().isoformat(),
+                                    "source": "Query SQL",
+                                }
+                            ],
+                            "source": {
+                                "name": "Query SQL",
+                                "url": "postgresql://postgres:1234@host.docker.internal:5432/film/film_table",
+                            },
+                        },
+                    }
+                )
+
+            # ==============================================================================
+            messages.append({"role": "user", "content": f"{query_result}"})
+
+            response = generate(messages)
+            full_answer = ""
+            for chunk in response:
+                delta = chunk.choices[0].delta
+                content_piece = getattr(delta, "content", None)
+                if content_piece is not None:
+                    full_answer += content_piece
+
+            valid = validator(str(query_result), full_answer.strip())
+            if not valid:
+                attempt += 1
+                if __event_emitter__:
+                    await __event_emitter__(
+                        {
+                            "type": "status",
+                            "data": {
+                                "description": f"Jawaban tidak valid. Mengulang percobaan ke-{attempt + 1}...",
+                                "done": False,
+                                "hidden": False,
+                            },
+                        }
+                    )
+                    await asyncio.sleep(1)
+
+                    await __event_emitter__(
+                        {
+                            "type": "status",
+                            "data": {
+                                "description": f"Memeriksa jawaban... (percobaan ke-{attempt + 1})",
+                                "done": False,
+                                "hidden": False,
+                            },
+                        }
+                    )
+                    await asyncio.sleep(1)
+
+            else:
+                if __event_emitter__:
+                    await __event_emitter__(
+                        {
+                            "type": "status",
+                            "data": {
+                                "description": "Jawaban valid! Mengirimkan ke pengguna...",
+                                "done": True,
+                                "hidden": False,
+                            },
+                        }
+                    )
+                    await asyncio.sleep(1)
+                break
+
+        if __event_emitter__:
+            await __event_emitter__(
+                {
+                    "type": "status",
+                    "data": {
+                        "description": "Jawaban valid! Mengirimkan ke pengguna...",
+                        "done": True,
+                        "hidden": False,
+                    },
+                }
+            )
+            await asyncio.sleep(1)
+
+        return full_answer
+
+        jawa = full_answer.split("\n")[-1]
+        return jawa
+        # ==============================================================================
