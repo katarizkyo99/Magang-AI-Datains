@@ -1,5 +1,6 @@
 #Sudah bisa filter select a, b, c from d
 #Sudah bisa ganti = jadi ilike
+#Sudah bisa memisahkan kalau depannya mirip
 
 
 import json
@@ -83,7 +84,6 @@ def validator(query_result: str, answer: str):
 
 # ======================================================================================================================
 
-
 # ======================================================================================================================
 
 
@@ -98,6 +98,7 @@ class Pipe:
     def __init__(self):
         self.engine = koneksidb()
         self.citation = False
+        self.last_options = None
 
     async def pipe(
         self,
@@ -121,11 +122,45 @@ class Pipe:
         messages = [
             {
                 "role": "system",
-                "content": "You are an AI Chatbot Film that always answers in clear and concise Indonesian and uses database references as answering material",
+                "content": "You are an AI Chatbot that always answers in clear and concise Indonesian and uses database references as answering material",
             }
         ]
 
         user_message = get_last_user_message(body["messages"])
+        # ===================================================================
+
+        # Kalau sebelumnya ada opsi yang belum dipilih
+        if self.last_options:
+            # Cek apakah user mengirim angka pilihan
+            if user_message.isdigit():
+                pilihan = (
+                    int(user_message) - 1
+                )  # Karena user pilih 1/2/3, index Python mulai dari 0
+                if 0 <= pilihan < len(self.last_options):
+                    selected_row = self.last_options[pilihan]
+                    self.last_options = None  # Reset setelah berhasil pilih
+                    # Sekarang kamu bisa proses selected_row
+                    # Misal kamu mau generate jawaban dari selected_row
+                    return self.generate_final_answer(selected_row)
+                else:
+                    return (
+                        "Pilihan tidak valid. Silakan pilih sesuai nomor yang tersedia."
+                    )
+
+            else:
+                # Atau user ketik nama langsung
+                selected_row = None
+                for row in self.last_options:
+                    if user_message.lower() in (row.get("unor", "").lower()):
+                        selected_row = row
+                        break
+
+                if selected_row:
+                    self.last_options = None  # Reset setelah berhasil pilih
+                    return self.generate_final_answer(selected_row)
+                else:
+                    return "Nama tidak ditemukan dalam pilihan. Silakan pilih sesuai daftar yang tersedia."
+        # ===================================================================
 
         # ===================================================================
         table_node_mapping = SQLTableNodeMapping(sql_database)
@@ -143,6 +178,7 @@ class Pipe:
         instruction_1 = """
         Given an input question, first create a syntactically correct {dialect} query to run, then look at the results of the query and return the answer. 
         You must SELECT multiple relevant columns (at least 2 or more) when building your query unless the question specifically asks for only one column.
+        If the user requests information related to a specific entity (e.g., "dinas" or "balai"), and there are multiple entities with similar names (e.g., "dinas lingkungan" and "dinas kesehatan", or "balai pendidikan menengah bantul" and "balai pendidikan menengah yogyakarta"), then separate the results based on the full name of the institution using the unor field. Always include the unor column in the SELECT clause to enable proper grouping. For each distinct unor, return a maximum of 3 data entries based on the most relevant or highest values.
         You can order the results by a relevant column to return the most interesting examples in the database.
         Unless the user specifies in the question a specific number of examples to obtain, query for at most 10 results using the LIMIT clause as per the database engine. You can order the results to return the most informative data in the database.
         Never query for all the columns from a specific table, only ask for a few relevant columns given the question.
@@ -331,3 +367,4 @@ class Pipe:
         jawa = full_answer.split("\n")[-1]
         return jawa
         # ==============================================================================
+
