@@ -1,3 +1,7 @@
+#Sudah bisa filter select a, b, c from d
+#Sudah bisa ganti = jadi ilike
+
+
 import json
 import os
 import httpx
